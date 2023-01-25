@@ -5,114 +5,165 @@
  * @format
  */
 
+import {runOnJS} from 'react-native-reanimated';
 import React from 'react';
 import type {PropsWithChildren} from 'react';
 import {
+  Alert,
+  Button,
+  LayoutChangeEvent,
+  PixelRatio,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TouchableOpacity,
   useColorScheme,
   View,
 } from 'react-native';
 
 import {
   Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
 } from 'react-native/Libraries/NewAppScreen';
+import TextRecognition, { TextRecognitionResult } from '@react-native-ml-kit/text-recognition';
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
+import {
+  useCameraDevices,
+  useFrameProcessor,
+  Camera,
+  Frame,
+} from 'react-native-vision-camera';
+import {frameToBase64} from 'vision-camera-base64';
 
-function Section({children, title}: SectionProps): JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
+const CREDIT_CARD_REGEX = /\b(?:\d[ -]*){13,16}\b/;
+
+const findCardNumberInResult = (result: TextRecognitionResult): string => {
+  const match = result.text.match(CREDIT_CARD_REGEX);
+  return match ? match[0] : '';
+};
 
 function App(): JSX.Element {
+  const [hasPermission, setHasPermission] = React.useState(false);
+  const [showCamera, setShowCamera] = React.useState(false);
+  const [pixelRatio, setPixelRatio] = React.useState<number>(1);
+  const [creditCardNumber, setCreditCardNumber] = React.useState<string>();
+
+  const devices = useCameraDevices();
+  const device = devices.back;
+
   const isDarkMode = useColorScheme() === 'dark';
 
   const backgroundStyle = {
     backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
   };
 
+  const check = async (imageBase64Data: string) => {
+    const result = await TextRecognition.recognize(
+      `data:image/jpeg;base64,${imageBase64Data}`,
+    );
+
+    const creditCardNumberDetected = findCardNumberInResult(result)
+    
+    if (creditCardNumberDetected.length) {
+      console.log('---------');
+      console.log(creditCardNumberDetected);
+      console.log('---------');
+      setShowCamera(false);
+    }
+    setCreditCardNumber(creditCardNumberDetected);
+  };
+
+  const frameProcessor = useFrameProcessor(frame => {
+    'worklet';
+    const image = frameToBase64(frame);
+    runOnJS(check)(image);
+  }, [check]);
+
+  const openCamera = async () => {
+    const status = await Camera.requestCameraPermission();
+    const isAuthorized = status === 'authorized';
+    setHasPermission(isAuthorized);
+
+    if (isAuthorized) {
+      setShowCamera(true);
+    }
+
+    if (!(isAuthorized && device)) {
+      Alert.alert(
+        'No Cameras Detected',
+        'It looks like your device doesnt have any cameras.',
+        [{text: 'OK', onPress: () => console.log('OK Pressed')}],
+      );
+    }
+  };
+
+  const renderOverlay = () => {
+    return (
+      <SafeAreaView>
+        <Text>Ok!</Text>
+      </SafeAreaView>
+    );
+  };
+
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <>
+      {showCamera && device && hasPermission && (
+        <>
+          <Camera
+            style={[StyleSheet.absoluteFill]}
+            frameProcessor={frameProcessor}
+            device={device}
+            isActive={true}
+            frameProcessorFps={5}
+            onLayout={(event: LayoutChangeEvent) => {
+              setPixelRatio(
+                event.nativeEvent.layout.width /
+                  PixelRatio.getPixelSizeForLayoutSize(
+                    event.nativeEvent.layout.width,
+                  ),
+              );
+            }}
+          />
+          {renderOverlay()}
+        </>
+      )}
+
+      {!showCamera && (
+        <SafeAreaView style={backgroundStyle}>
+          <StatusBar
+            barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+            backgroundColor={backgroundStyle.backgroundColor}
+          />
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            style={backgroundStyle}>
+            <View
+              style={{
+                backgroundColor: isDarkMode ? Colors.black : Colors.white,
+              }}>
+              <Button onPress={openCamera} title="Scan Card"></Button>
+
+              <View>
+                <Text style={styles.number}>{creditCardNumber}</Text>
+              </View>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      )}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
+  container: {
+    flex: 1,
+    flexDirection: 'row',
   },
-  sectionTitle: {
+  number: {
     fontSize: 24,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
-  },
+    color: '#fff'
+  }
 });
 
 export default App;
